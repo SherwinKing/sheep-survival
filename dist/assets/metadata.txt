@@ -1,0 +1,5 @@
+//Name Path
+1 sheep assets/sheep.png
+2 wolf assets/wolf.png
+3 grass assets/grass.png
+4 background assets/background.png
