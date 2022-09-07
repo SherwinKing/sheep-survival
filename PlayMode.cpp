@@ -8,6 +8,92 @@
 
 #include <random>
 
+#include "data_path.hpp"
+
+void PlayMode::load() {
+	//TODO: do not hard code
+	static const std::string asset_metadata_path = data_path("assets/metadata.txt");
+
+	// ref: https://stackoverflow.com/questions/3910326/c-read-file-line-by-line-then-split-each-line-using-the-delimiter
+	// open file in text mode
+	std::ifstream asset_metadata_file(asset_metadata_path);
+	std::string tile_info;
+
+	// skip the first line of the metadata file
+	// std::getline(asset_metadata_file, nullptr);
+	asset_metadata_file.ignore(LONG_MAX, '\n');
+
+	// load the tiles listed in the metadata file
+	while (std::getline(asset_metadata_file, tile_info)) {
+		std::stringstream tile_info_stream(tile_info);
+		int tile_id;
+		std::string tile_name;
+		std::string tile_path;
+
+		tile_info_stream >> tile_id >> tile_name >> tile_path;
+
+		// store the tile name to tile id and palette id relationship
+		// currently the tile id and the palette id are the same
+		int palette_id = tile_id;
+		tile_name_to_tile_id_map[tile_name] = tile_id;
+		tile_name_to_palette_id_map[tile_name] = palette_id;
+
+
+		glm::uvec2 size;
+		std::vector< glm::u8vec4 > data;
+		load_png(data_path(tile_path), &size, &data, UpperLeftOrigin);
+
+		// check if size is 8 x 8
+		if (size.x != 8 || size.y != 8) {
+			throw std::runtime_error("The tile is not 8x8 pixels!");
+		}
+
+		auto obtain_color_index_in_palette = [&palette_table = ppu.palette_table](u_int8_t palette_id, glm::u8vec4 color, int32_t &color_id){
+			for (uint32_t i=0; i < palette_table[palette_id].size(); i++) {
+				const glm::u8vec4 & palette_color = palette_table[palette_id][i];
+				if (palette_color[0] == color[0] &&
+					palette_color[1] == color[1] &&
+					palette_color[2] == color[2] &&
+					palette_color[3] == color[3]) {
+						color_id = i;
+						return;
+					}
+			}
+			color_id = -1;
+		};
+
+		// extract palette and color index in palette
+		uint32_t next_color_id_to_set = 0;
+		for (uint32_t y = 0; y < 8; y++) {
+			uint8_t bit0_row = 0;
+			uint8_t bit1_row = 0;
+			for (uint32_t x = 0; x < 8; x++) {
+				bit0_row <<= 1;
+				bit1_row <<= 1;
+
+				int32_t color_id;
+				glm::u8vec4 & color = data[8*y+x];
+				obtain_color_index_in_palette(palette_id, color, color_id);
+
+				// no color matched
+				if (color_id == -1) {
+					if (next_color_id_to_set == 4)	// if palette full
+						throw std::runtime_error("The tile has more than four colors!");
+
+					// int palette_id = tile_id;
+					ppu.palette_table[palette_id][next_color_id_to_set] = color;
+					color_id = next_color_id_to_set;
+					next_color_id_to_set++;
+				}
+				
+				bit0_row |= color_id & 1;
+				bit1_row |= color_id >> 1;
+			}
+			ppu.tile_table[tile_id].bit0[y] = bit0_row;
+			ppu.tile_table[tile_id].bit1[y] = bit1_row;
+		}
+	}
+}
 PlayMode::PlayMode() {
 	//TODO:
 	// you *must* use an asset pipeline of some sort to generate tiles.
@@ -193,16 +279,20 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//player sprite:
 	ppu.sprites[0].x = int8_t(player_at.x);
 	ppu.sprites[0].y = int8_t(player_at.y);
-	ppu.sprites[0].index = 32;
-	ppu.sprites[0].attributes = 7;
+	// ppu.sprites[0].index = 32;
+	ppu.sprites[0].index = tile_name_to_tile_id_map["wolf"];
+	// ppu.sprites[0].attributes = 7;
+	ppu.sprites[0].attributes = tile_name_to_palette_id_map["wolf"];
 
 	//some other misc sprites:
 	for (uint32_t i = 1; i < 63; ++i) {
 		float amt = (i + 2.0f * background_fade) / 62.0f;
 		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * PPU466::ScreenWidth);
 		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * PPU466::ScreenWidth);
-		ppu.sprites[i].index = 32;
-		ppu.sprites[i].attributes = 6;
+		// ppu.sprites[i].index = 32;
+		ppu.sprites[i].index = tile_name_to_tile_id_map["sheep"];
+		// ppu.sprites[i].attributes = 6;
+		ppu.sprites[i].attributes = tile_name_to_palette_id_map["sheep"];
 		if (i % 2) ppu.sprites[i].attributes |= 0x80; //'behind' bit
 	}
 
