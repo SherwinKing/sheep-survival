@@ -15,6 +15,7 @@ struct PlayMode : Mode {
 	virtual ~PlayMode();
 
 	virtual void load();
+	virtual void init();
 
 	//functions called by main loop:
 	virtual bool handle_event(SDL_Event const &, glm::uvec2 const &window_size) override;
