@@ -8,6 +8,127 @@
 
 #include <random>
 
+#include "data_path.hpp"
+
+void PlayMode::load() {
+	//TODO: do not hard code
+	static const std::string asset_metadata_path = data_path("assets/metadata.txt");
+
+	// ref: https://stackoverflow.com/questions/3910326/c-read-file-line-by-line-then-split-each-line-using-the-delimiter
+	// open file in text mode
+	std::ifstream asset_metadata_file(asset_metadata_path);
+	std::string tile_info;
+
+	// skip the first line of the metadata file
+	// std::getline(asset_metadata_file, nullptr);
+	asset_metadata_file.ignore(LONG_MAX, '\n');
+
+	// load the tiles listed in the metadata file
+	while (std::getline(asset_metadata_file, tile_info)) {
+		std::stringstream tile_info_stream(tile_info);
+		int tile_id;
+		std::string tile_name;
+		std::string tile_path;
+
+		tile_info_stream >> tile_id >> tile_name >> tile_path;
+
+		// store the tile name to tile id and palette id relationship
+		// currently the tile id and the palette id are the same
+		int palette_id = tile_id;
+		tile_name_to_tile_id_map[tile_name] = tile_id;
+		tile_name_to_palette_id_map[tile_name] = palette_id;
+
+
+		glm::uvec2 size;
+		std::vector< glm::u8vec4 > data;
+		load_png(data_path(tile_path), &size, &data, LowerLeftOrigin);
+
+		// check if size is 8 x 8
+		if (size.x != 8 || size.y != 8) {
+			throw std::runtime_error("The tile is not 8x8 pixels!");
+		}
+
+		auto obtain_color_index_in_palette = [&palette_table = ppu.palette_table](u_int8_t palette_id, glm::u8vec4 color, int32_t &color_id){
+			for (uint32_t i=0; i < palette_table[palette_id].size(); i++) {
+				const glm::u8vec4 & palette_color = palette_table[palette_id][i];
+				if (palette_color[0] == color[0] &&
+					palette_color[1] == color[1] &&
+					palette_color[2] == color[2] &&
+					palette_color[3] == color[3]) {
+						color_id = i;
+						return;
+					}
+			}
+			color_id = -1;
+		};
+
+		// extract palette and color index in palette
+		uint32_t next_color_id_to_set = 0;
+		for (uint32_t y = 0; y < 8; y++) {
+			uint8_t bit0_row = 0;
+			uint8_t bit1_row = 0;
+			for (uint32_t x = 0; x < 8; x++) {
+				bit0_row <<= 1;
+				bit1_row <<= 1;
+
+				int32_t color_id;
+				glm::u8vec4 & color = data[8*y+x];
+				obtain_color_index_in_palette(palette_id, color, color_id);
+
+				// no color matched
+				if (color_id == -1) {
+					if (next_color_id_to_set == 4)	// if palette full
+						throw std::runtime_error("The tile has more than four colors!");
+
+					// int palette_id = tile_id;
+					ppu.palette_table[palette_id][next_color_id_to_set] = color;
+					color_id = next_color_id_to_set;
+					next_color_id_to_set++;
+				}
+				
+				bit0_row |= color_id & 1;
+				bit1_row |= color_id >> 1;
+			}
+			ppu.tile_table[tile_id].bit0[y] = bit0_row;
+			ppu.tile_table[tile_id].bit1[y] = bit1_row;
+		}
+	}
+}
+
+void PlayMode::init() {
+	// init the background
+	for (uint32_t y = 0; y < PPU466::BackgroundHeight; ++y) {
+		for (uint32_t x = 0; x < PPU466::BackgroundWidth; ++x) {
+			//TODO: make weird plasma thing
+			ppu.background[x+PPU466::BackgroundWidth*y] = tile_name_to_palette_id_map["background"] << 8 | tile_name_to_tile_id_map["background"];
+		}
+	}
+
+	// init the sprites
+	// init player 
+	ppu.sprites[0].index = tile_name_to_tile_id_map["sheep"];
+	ppu.sprites[0].attributes = tile_name_to_palette_id_map["sheep"];
+	player_at.x = 0;
+	player_at.y = 0;
+
+	// init other sprites
+	for (uint32_t i = 1; i < 63; ++i) {
+		if (i & 8) {
+			ppu.sprites[i].index = tile_name_to_tile_id_map["wolf"];
+			ppu.sprites[i].attributes = is_wolf_bit_mask | tile_name_to_palette_id_map["wolf"];
+		} else {
+			ppu.sprites[i].index = tile_name_to_tile_id_map["grass"];
+			ppu.sprites[i].attributes = is_grass_bit_mask | tile_name_to_palette_id_map["grass"];
+			num_grass++;
+		}
+
+		// init positions. Copied from original base codes.
+		float amt = (i + 2.0f * background_fade) / 62.0f;
+		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * PPU466::ScreenWidth);
+		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * PPU466::ScreenWidth);
+	}
+}
+
 PlayMode::PlayMode() {
 	//TODO:
 	// you *must* use an asset pipeline of some sort to generate tiles.
@@ -48,59 +169,11 @@ PlayMode::PlayMode() {
 		}
 	}
 
-	//use sprite 32 as a "player":
-	ppu.tile_table[32].bit0 = {
-		0b01111110,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b01111110,
-	};
-	ppu.tile_table[32].bit1 = {
-		0b00000000,
-		0b00000000,
-		0b00011000,
-		0b00100100,
-		0b00000000,
-		0b00100100,
-		0b00000000,
-		0b00000000,
-	};
+	// load the assets
+	load();
 
-	//makes the outside of tiles 0-16 solid:
-	ppu.palette_table[0] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//makes the center of tiles 0-16 solid:
-	ppu.palette_table[1] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//used for the player:
-	ppu.palette_table[7] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0xff, 0xff, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//used for the misc other sprites:
-	ppu.palette_table[6] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x88, 0x88, 0xff, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-	};
+	// initialize the playmode
+	init();
 
 }
 
@@ -153,11 +226,46 @@ void PlayMode::update(float elapsed) {
 	background_fade += elapsed / 10.0f;
 	background_fade -= std::floor(background_fade);
 
-	constexpr float PlayerSpeed = 30.0f;
+	constexpr float PlayerSpeed = 60.0f;
 	if (left.pressed) player_at.x -= PlayerSpeed * elapsed;
 	if (right.pressed) player_at.x += PlayerSpeed * elapsed;
 	if (down.pressed) player_at.y -= PlayerSpeed * elapsed;
 	if (up.pressed) player_at.y += PlayerSpeed * elapsed;
+
+	//some other misc sprites:
+	for (uint32_t i = 1; i < 63; ++i) {
+		// see if sheep is eaten by wolf or grass is eaten by sheep
+		int x_difference = int(std::abs(ppu.sprites[i].x - player_at.x)) % PPU466::ScreenWidth;
+		int y_difference = int(std::abs(ppu.sprites[i].y - player_at.y)) % PPU466::ScreenHeight;
+		// if (std::abs(ppu.sprites[i].x - player_at.x) <= 8 && std::abs(ppu.sprites[i].y - player_at.y) <= 8) {
+		if (x_difference <= 8 && y_difference <= 8) {
+			// if sheep (player) is eaten by wolf, game ends, and restart the game
+			if (ppu.sprites[i].attributes & is_wolf_bit_mask) {
+				init();
+			} else if (ppu.sprites[i].attributes & is_grass_bit_mask) {
+				ppu.sprites[i].attributes |= out_of_game_bit_mask;
+				ppu.sprites[i].y = 250;	// move out of map
+				num_grass--;
+
+				// if all grass is eaten, game ends, and restart the game
+				if (num_grass == 0) {
+					init();
+				}
+			}
+		}
+
+		// out-of-map sprite will not move
+		if (ppu.sprites[i].attributes & out_of_game_bit_mask)
+			continue;
+
+		// grass sprite will not move
+		if (ppu.sprites[i].attributes & is_grass_bit_mask)
+			continue;
+
+		float amt = (i + 2.0f * background_fade) / 62.0f;
+		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.005f * player_at.x) * 0.4f * PPU466::ScreenWidth);
+		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.005f * player_at.y) * 0.4f * PPU466::ScreenWidth);
+	}
 
 	//reset button press counters:
 	left.downs = 0;
@@ -169,23 +277,6 @@ void PlayMode::update(float elapsed) {
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//--- set ppu state based on game state ---
 
-	//background color will be some hsv-like fade:
-	ppu.background_color = glm::u8vec4(
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 0.0f / 3.0f) ) ) ))),
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 1.0f / 3.0f) ) ) ))),
-		std::min(255,std::max(0,int32_t(255 * 0.5f * (0.5f + std::sin( 2.0f * M_PI * (background_fade + 2.0f / 3.0f) ) ) ))),
-		0xff
-	);
-
-	//tilemap gets recomputed every frame as some weird plasma thing:
-	//NOTE: don't do this in your game! actually make a map or something :-)
-	for (uint32_t y = 0; y < PPU466::BackgroundHeight; ++y) {
-		for (uint32_t x = 0; x < PPU466::BackgroundWidth; ++x) {
-			//TODO: make weird plasma thing
-			ppu.background[x+PPU466::BackgroundWidth*y] = ((x+y)%16);
-		}
-	}
-
 	//background scroll:
 	ppu.background_position.x = int32_t(-0.5f * player_at.x);
 	ppu.background_position.y = int32_t(-0.5f * player_at.y);
@@ -193,19 +284,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//player sprite:
 	ppu.sprites[0].x = int8_t(player_at.x);
 	ppu.sprites[0].y = int8_t(player_at.y);
-	ppu.sprites[0].index = 32;
-	ppu.sprites[0].attributes = 7;
-
-	//some other misc sprites:
-	for (uint32_t i = 1; i < 63; ++i) {
-		float amt = (i + 2.0f * background_fade) / 62.0f;
-		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * PPU466::ScreenWidth);
-		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * PPU466::ScreenWidth);
-		ppu.sprites[i].index = 32;
-		ppu.sprites[i].attributes = 6;
-		if (i % 2) ppu.sprites[i].attributes |= 0x80; //'behind' bit
-	}
-
+	
 	//--- actually draw ---
 	ppu.draw(drawable_size);
 }
