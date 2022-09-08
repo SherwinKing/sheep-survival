@@ -41,7 +41,7 @@ void PlayMode::load() {
 
 		glm::uvec2 size;
 		std::vector< glm::u8vec4 > data;
-		load_png(data_path(tile_path), &size, &data, UpperLeftOrigin);
+		load_png(data_path(tile_path), &size, &data, LowerLeftOrigin);
 
 		// check if size is 8 x 8
 		if (size.x != 8 || size.y != 8) {
@@ -105,14 +105,27 @@ void PlayMode::init() {
 	}
 
 	// init the sprites
-	// init player
-	ppu.sprites[0].index = tile_name_to_tile_id_map["wolf"];
-	ppu.sprites[0].attributes = tile_name_to_palette_id_map["wolf"];
+	// init player 
+	ppu.sprites[0].index = tile_name_to_tile_id_map["sheep"];
+	ppu.sprites[0].attributes = tile_name_to_palette_id_map["sheep"];
+	player_at.x = 0;
+	player_at.y = 0;
 
 	// init other sprites
 	for (uint32_t i = 1; i < 63; ++i) {
-		ppu.sprites[i].index = tile_name_to_tile_id_map["sheep"];
-		ppu.sprites[i].attributes = tile_name_to_palette_id_map["sheep"];
+		if (i & 8) {
+			ppu.sprites[i].index = tile_name_to_tile_id_map["wolf"];
+			ppu.sprites[i].attributes = is_wolf_bit_mask | tile_name_to_palette_id_map["wolf"];
+		} else {
+			ppu.sprites[i].index = tile_name_to_tile_id_map["grass"];
+			ppu.sprites[i].attributes = is_grass_bit_mask | tile_name_to_palette_id_map["grass"];
+			num_grass++;
+		}
+
+		// init positions. Copied from original base codes.
+		float amt = (i + 2.0f * background_fade) / 62.0f;
+		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * PPU466::ScreenWidth);
+		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * PPU466::ScreenWidth);
 	}
 }
 
@@ -155,60 +168,6 @@ PlayMode::PlayMode() {
 			ppu.tile_table[index] = tile;
 		}
 	}
-
-	//use sprite 32 as a "player":
-	ppu.tile_table[32].bit0 = {
-		0b01111110,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b11111111,
-		0b01111110,
-	};
-	ppu.tile_table[32].bit1 = {
-		0b00000000,
-		0b00000000,
-		0b00011000,
-		0b00100100,
-		0b00000000,
-		0b00100100,
-		0b00000000,
-		0b00000000,
-	};
-
-	//makes the outside of tiles 0-16 solid:
-	ppu.palette_table[0] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//makes the center of tiles 0-16 solid:
-	ppu.palette_table[1] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//used for the player:
-	ppu.palette_table[7] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0xff, 0xff, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-	};
-
-	//used for the misc other sprites:
-	ppu.palette_table[6] = {
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-		glm::u8vec4(0x88, 0x88, 0xff, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0xff),
-		glm::u8vec4(0x00, 0x00, 0x00, 0x00),
-	};
 
 	// load the assets
 	load();
@@ -267,11 +226,46 @@ void PlayMode::update(float elapsed) {
 	background_fade += elapsed / 10.0f;
 	background_fade -= std::floor(background_fade);
 
-	constexpr float PlayerSpeed = 30.0f;
+	constexpr float PlayerSpeed = 60.0f;
 	if (left.pressed) player_at.x -= PlayerSpeed * elapsed;
 	if (right.pressed) player_at.x += PlayerSpeed * elapsed;
 	if (down.pressed) player_at.y -= PlayerSpeed * elapsed;
 	if (up.pressed) player_at.y += PlayerSpeed * elapsed;
+
+	//some other misc sprites:
+	for (uint32_t i = 1; i < 63; ++i) {
+		// see if sheep is eaten by wolf or grass is eaten by sheep
+		int x_difference = int(std::abs(ppu.sprites[i].x - player_at.x)) % PPU466::ScreenWidth;
+		int y_difference = int(std::abs(ppu.sprites[i].y - player_at.y)) % PPU466::ScreenHeight;
+		// if (std::abs(ppu.sprites[i].x - player_at.x) <= 8 && std::abs(ppu.sprites[i].y - player_at.y) <= 8) {
+		if (x_difference <= 8 && y_difference <= 8) {
+			// if sheep (player) is eaten by wolf, game ends, and restart the game
+			if (ppu.sprites[i].attributes & is_wolf_bit_mask) {
+				init();
+			} else if (ppu.sprites[i].attributes & is_grass_bit_mask) {
+				ppu.sprites[i].attributes |= out_of_game_bit_mask;
+				ppu.sprites[i].y = 250;	// move out of map
+				num_grass--;
+
+				// if all grass is eaten, game ends, and restart the game
+				if (num_grass == 0) {
+					init();
+				}
+			}
+		}
+
+		// out-of-map sprite will not move
+		if (ppu.sprites[i].attributes & out_of_game_bit_mask)
+			continue;
+
+		// grass sprite will not move
+		if (ppu.sprites[i].attributes & is_grass_bit_mask)
+			continue;
+
+		float amt = (i + 2.0f * background_fade) / 62.0f;
+		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.005f * player_at.x) * 0.4f * PPU466::ScreenWidth);
+		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.005f * player_at.y) * 0.4f * PPU466::ScreenWidth);
+	}
 
 	//reset button press counters:
 	left.downs = 0;
@@ -291,13 +285,6 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	ppu.sprites[0].x = int8_t(player_at.x);
 	ppu.sprites[0].y = int8_t(player_at.y);
 	
-	//some other misc sprites:
-	for (uint32_t i = 1; i < 63; ++i) {
-		float amt = (i + 2.0f * background_fade) / 62.0f;
-		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * PPU466::ScreenWidth);
-		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * PPU466::ScreenWidth);
-	}
-
 	//--- actually draw ---
 	ppu.draw(drawable_size);
 }

@@ -26,6 +26,10 @@ struct PlayMode : Mode {
 	std::unordered_map<std::string, int> tile_name_to_tile_id_map;
 	std::unordered_map<std::string, int> tile_name_to_palette_id_map;
 
+	//----- sprite related ----
+	const u_int8_t out_of_game_bit_mask = 1 << 3;
+	const u_int8_t is_grass_bit_mask = 1 << 4;
+	const u_int8_t is_wolf_bit_mask = 1 << 5;
 
 	//----- game state -----
 
@@ -40,6 +44,9 @@ struct PlayMode : Mode {
 
 	//player position:
 	glm::vec2 player_at = glm::vec2(0.0f);
+
+	//number of grass in map
+	int num_grass = 0;
 
 	//----- drawing handled by PPU466 -----
 
