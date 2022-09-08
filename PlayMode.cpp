@@ -96,11 +96,23 @@ void PlayMode::load() {
 }
 
 void PlayMode::init() {
+	// init the background
 	for (uint32_t y = 0; y < PPU466::BackgroundHeight; ++y) {
 		for (uint32_t x = 0; x < PPU466::BackgroundWidth; ++x) {
 			//TODO: make weird plasma thing
 			ppu.background[x+PPU466::BackgroundWidth*y] = tile_name_to_palette_id_map["background"] << 8 | tile_name_to_tile_id_map["background"];
 		}
+	}
+
+	// init the sprites
+	// init player
+	ppu.sprites[0].index = tile_name_to_tile_id_map["wolf"];
+	ppu.sprites[0].attributes = tile_name_to_palette_id_map["wolf"];
+
+	// init other sprites
+	for (uint32_t i = 1; i < 63; ++i) {
+		ppu.sprites[i].index = tile_name_to_tile_id_map["sheep"];
+		ppu.sprites[i].attributes = tile_name_to_palette_id_map["sheep"];
 	}
 }
 
@@ -278,21 +290,12 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//player sprite:
 	ppu.sprites[0].x = int8_t(player_at.x);
 	ppu.sprites[0].y = int8_t(player_at.y);
-	// ppu.sprites[0].index = 32;
-	ppu.sprites[0].index = tile_name_to_tile_id_map["wolf"];
-	// ppu.sprites[0].attributes = 7;
-	ppu.sprites[0].attributes = tile_name_to_palette_id_map["wolf"];
-
+	
 	//some other misc sprites:
 	for (uint32_t i = 1; i < 63; ++i) {
 		float amt = (i + 2.0f * background_fade) / 62.0f;
 		ppu.sprites[i].x = int8_t(0.5f * PPU466::ScreenWidth + std::cos( 2.0f * M_PI * amt * 5.0f + 0.01f * player_at.x) * 0.4f * PPU466::ScreenWidth);
 		ppu.sprites[i].y = int8_t(0.5f * PPU466::ScreenHeight + std::sin( 2.0f * M_PI * amt * 3.0f + 0.01f * player_at.y) * 0.4f * PPU466::ScreenWidth);
-		// ppu.sprites[i].index = 32;
-		ppu.sprites[i].index = tile_name_to_tile_id_map["sheep"];
-		// ppu.sprites[i].attributes = 6;
-		ppu.sprites[i].attributes = tile_name_to_palette_id_map["sheep"];
-		if (i % 2) ppu.sprites[i].attributes |= 0x80; //'behind' bit
 	}
 
 	//--- actually draw ---
